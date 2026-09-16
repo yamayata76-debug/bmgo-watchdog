@@ -1,0 +1,22 @@
+name: heartbeat
+# GitHub auto-disables scheduled workflows after 60 days of repo inactivity.
+# This monthly no-op commit keeps the watchdog alive forever, fully automated.
+on:
+  schedule:
+    - cron: '0 0 1 * *'
+  workflow_dispatch:
+
+jobs:
+  beat:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u +"heartbeat: %Y-%m-%dT%H:%M:%SZ" > HEARTBEAT.md
+          git config user.name bmgo-watchdog
+          git config user.email watchdog@users.noreply.github.com
+          git add HEARTBEAT.md
+          git commit -m "heartbeat" || exit 0
+          git push
