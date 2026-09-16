@@ -11,9 +11,9 @@ owner, or the stack.
 |---|---|---|
 | `SITE_URL/api/health` | `site-down` | Visitors see downtime — flip origin NOW |
 | `ORIGIN_A_URL`, `ORIGIN_B_URL` | `originA-down` / `originB-down` | One backend dead/suspended |
-| `Server:` header == cloudflare | `proxy-leak` | Proxy disabled or bypassed — origin stack visible |
+| `Server:` signature change | `frontdoor-changed(...)` | Front door changed (host move, proxy insert, takeover) |
 | CSP header present | `csp-missing` | Middleware/deploy broken |
-| Authoritative CNAME == expected | `dns-drift(...)` | DNS changed behind your back (hijack or stray edit) |
+| Authoritative www CNAME == expected | `dns-drift(...)` | DNS changed behind your back (hijack or stray edit) |
 
 Alerts fire **only on change** (new failure or recovery), plus a run link.
 Quiet when green.
@@ -31,7 +31,7 @@ Repo Settings → Secrets and variables → Actions → New repository secret:
 | `EXPECTED_TARGET` | current CNAME target, e.g. `<your>.leapcell.dev` (bare host, no scheme). **Update on every flip** (failover.ps1 reminds you; it can sync this automatically via `gh secret set` where gh is authed) |
 | `TG_BOT_TOKEN` | Telegram bot token for alerts |
 | `TG_CHAT_ID` | your Telegram user/chat id |
-| `CF_API_TOKEN` | Cloudflare "Edit zone DNS" token (read is enough for the drift check) |
+| `DESEC_TOKEN` | deSEC token restricted to the domain (read is enough for the drift check) |
 
 Then Actions → watchdog → Run workflow (manual test run). Break something on
 purpose once (e.g. wrong EXPECTED_TARGET) to see the Telegram message arrive.

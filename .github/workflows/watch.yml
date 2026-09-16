@@ -15,39 +15,40 @@ jobs:
           key: watchdog-state
           restore-keys: watchdog-state
 
-      - name: Check site, origins, cloak and DNS
+      - name: Check site, origins, front door and DNS
         id: checks
         env:
           SITE_URL: ${{ secrets.SITE_URL }}
           ORIGIN_A_URL: ${{ secrets.ORIGIN_A_URL }}
           ORIGIN_B_URL: ${{ secrets.ORIGIN_B_URL }}
           EXPECTED_TARGET: ${{ secrets.EXPECTED_TARGET }}
-          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          DESEC_TOKEN: ${{ secrets.DESEC_TOKEN }}
           DOMAIN: ${{ secrets.DOMAIN }}
         run: |
-          prev=$(cat state.txt 2>/dev/null || true)
+          prev_failures=$(sed -n '1p' state.txt 2>/dev/null || true)
+          prev_sig=$(sed -n '2p' state.txt 2>/dev/null || true)
           failures=""
           probe() { curl -sf --max-time 20 -H 'X-BG-Client: webapp' "$1/api/health" | grep -q '"status":"ok"'; }
           probe "$SITE_URL"       || failures="$failures site-down"
           probe "$ORIGIN_A_URL"   || failures="$failures originA-down"
           probe "$ORIGIN_B_URL"   || failures="$failures originB-down"
-          # Cloak check: public responses must carry Cloudflare's Server header.
-          # If the proxy was disabled (grey cloud), the origin stack leaks here.
-          srv=$(curl -sI --max-time 20 "$SITE_URL/" | grep -i '^server:' || true)
-          echo "$srv" | grep -qi cloudflare || failures="$failures proxy-leak"
+          # Front-door check: record the public Server signature; alert on ANY
+          # change (host migration, proxy insert/remove, takeover page).
+          sig=$(curl -sI --max-time 20 "$SITE_URL/" | grep -i '^server:' | tr -d '\r' || echo "server: none")
+          if [ -n "$prev_sig" ] && [ "$sig" != "$prev_sig" ]; then
+            failures="$failures frontdoor-changed($sig)"
+          fi
           curl -sI --max-time 20 "$SITE_URL/" | grep -qi '^content-security-policy:' \
             || failures="$failures csp-missing"
-          # DNS drift: authoritative CNAME must equal the expected origin.
-          zone=$(curl -s --max-time 20 -H "Authorization: Bearer $CF_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" | jq -r '.result[0].id')
-          live=$(curl -s --max-time 20 -H "Authorization: Bearer $CF_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/zones/$zone/dns_records?type=CNAME&name=$DOMAIN" \
-            | jq -r '.result[0].content')
+          # DNS drift: authoritative www CNAME must equal the expected origin.
+          live=$(curl -s --max-time 20 -H "Authorization: Token $DESEC_TOKEN" \
+            "https://desec.io/api/v1/dns/$DOMAIN/" \
+            | jq -r '.[] | select(.subname=="www" and .type=="CNAME") | .records[0]')
           [ "$live" = "$EXPECTED_TARGET" ] || failures="$failures dns-drift($live)"
           curr=$(echo "$failures" | xargs)
-          echo "$curr" > state.txt
+          printf '%s\n%s\n' "$curr" "$sig" > state.txt
           echo "curr=$curr" >> "$GITHUB_OUTPUT"
-          if [ "$curr" = "$prev" ]; then
+          if [ "$curr" = "$prev_failures" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
