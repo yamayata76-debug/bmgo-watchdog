@@ -43,8 +43,8 @@ jobs:
           # DNS drift: authoritative www CNAME must equal the expected origin.
           # Guarded: missing token/secrets report drift instead of killing the step.
           live=$(curl -s --max-time 20 -H "Authorization: Token $DESEC_TOKEN" \
-            "https://desec.io/api/v1/dns/$DOMAIN/" \
-            | jq -r '.[] | select(.subname=="www" and .type=="CNAME") | .records[0]' 2>/dev/null || echo "__dns_error__")
+            "https://desec.io/api/v1/domains/$DOMAIN/rrsets/?subname=www" \
+            | jq -r '.[] | select(.type=="CNAME") | .records[0]' 2>/dev/null | sed 's/\.$//' || echo "__dns_error__")
           if [ -z "$live" ] || [ "$live" = "null" ]; then live="__dns_error__"; fi
           [ "$live" = "$EXPECTED_TARGET" ] || failures="$failures dns-drift($live)"
           curr=$(echo "$failures" | xargs)
