@@ -1,0 +1,76 @@
+name: watchdog
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore previous state
+        uses: actions/cache/restore@v4
+        with:
+          path: state.txt
+          key: watchdog-state
+          restore-keys: watchdog-state
+
+      - name: Check site, origins, cloak and DNS
+        id: checks
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+          ORIGIN_A_URL: ${{ secrets.ORIGIN_A_URL }}
+          ORIGIN_B_URL: ${{ secrets.ORIGIN_B_URL }}
+          EXPECTED_TARGET: ${{ secrets.EXPECTED_TARGET }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          DOMAIN: ${{ secrets.DOMAIN }}
+        run: |
+          prev=$(cat state.txt 2>/dev/null || true)
+          failures=""
+          probe() { curl -sf --max-time 20 -H 'X-BG-Client: webapp' "$1/api/health" | grep -q '"status":"ok"'; }
+          probe "$SITE_URL"       || failures="$failures site-down"
+          probe "$ORIGIN_A_URL"   || failures="$failures originA-down"
+          probe "$ORIGIN_B_URL"   || failures="$failures originB-down"
+          # Cloak check: public responses must carry Cloudflare's Server header.
+          # If the proxy was disabled (grey cloud), the origin stack leaks here.
+          srv=$(curl -sI --max-time 20 "$SITE_URL/" | grep -i '^server:' || true)
+          echo "$srv" | grep -qi cloudflare || failures="$failures proxy-leak"
+          curl -sI --max-time 20 "$SITE_URL/" | grep -qi '^content-security-policy:' \
+            || failures="$failures csp-missing"
+          # DNS drift: authoritative CNAME must equal the expected origin.
+          zone=$(curl -s --max-time 20 -H "Authorization: Bearer $CF_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" | jq -r '.result[0].id')
+          live=$(curl -s --max-time 20 -H "Authorization: Bearer $CF_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/zones/$zone/dns_records?type=CNAME&name=$DOMAIN" \
+            | jq -r '.result[0].content')
+          [ "$live" = "$EXPECTED_TARGET" ] || failures="$failures dns-drift($live)"
+          curr=$(echo "$failures" | xargs)
+          echo "$curr" > state.txt
+          echo "curr=$curr" >> "$GITHUB_OUTPUT"
+          if [ "$curr" = "$prev" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Telegram alert on change
+        if: steps.checks.outputs.changed == 'true'
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          curr="${{ steps.checks.outputs.curr }}"
+          if [ -z "$curr" ]; then msg="BMGO recovered: all checks green"; \
+          else msg="BMGO ALERT: $curr"; fi
+          curl -s -X POST "https://api.telegram.org/bot$TG_BOT_TOKEN/sendMessage" \
+            -d "chat_id=$TG_CHAT_ID" \
+            --data-urlencode "text=$msg ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null
+          echo "alerted: $msg"
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.txt
+          key: watchdog-state-${{ github.run_id }}
