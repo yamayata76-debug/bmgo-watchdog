@@ -10,6 +10,7 @@ owner, or the stack.
 | Check | Alert text | Meaning |
 |---|---|---|
 | `SITE_URL/api/health` | `site-down` | Visitors see downtime — flip origin NOW |
+| Domain + www resolve publicly | `dns-unresolvable` / `www-unresolvable` | Registrar-level kill — switch to backup domain (see runbook) |
 | `ORIGIN_A_URL`, `ORIGIN_B_URL` | `originA-down` / `originB-down` | One backend dead/suspended |
 | `Server:` signature change | `frontdoor-changed(...)` | Front door changed (host move, proxy insert, takeover) |
 | CSP header present | `csp-missing` | Middleware/deploy broken |

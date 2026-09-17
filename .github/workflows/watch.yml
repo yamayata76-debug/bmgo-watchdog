@@ -32,6 +32,11 @@ jobs:
           probe "$SITE_URL"       || failures="$failures site-down"
           probe "$ORIGIN_A_URL"   || failures="$failures originA-down"
           probe "$ORIGIN_B_URL"   || failures="$failures originB-down"
+          # Domain-dead check: if the domain itself stops resolving anywhere
+          # (registrar suspension), nothing else matters -- scream loudly.
+          dig +short "$DOMAIN" @1.1.1.1 >/dev/null 2>&1 || failures="$failures dns-unresolvable"
+          host_www=$(dig +short "www.$DOMAIN" @1.1.1.1 2>/dev/null | head -1 || true)
+          [ -n "$host_www" ] || failures="$failures www-unresolvable"
           # Front-door check: record the public Server signature; alert on ANY
           # change (host migration, proxy insert/remove, takeover page).
           sig=$(curl -sI --max-time 20 "$SITE_URL/" | grep -i '^server:' | tr -d '\r' || echo "server: none")
